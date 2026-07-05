@@ -1,0 +1,20 @@
+# 로컬 전용 설정 (머신별 권한 등)
+.claude/settings.local.json
+
+# 하네스 런타임 산출물 (기능별 작업 폴더)
+_workspace/
+_workspace_*/
+
+# 환경변수
+.env
+.env.local
+*.env
+
+# 의존성 / 빌드 (향후 앱 코드)
+node_modules/
+dist/
+.next/
+build/
+
+# OS
+.DS_Store
