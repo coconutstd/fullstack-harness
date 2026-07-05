@@ -7,6 +7,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
+import { EXPIRES_IN_SECONDS } from './auth.constants';
 import { LoginDto } from './dto/login.dto';
 import { SignupDto } from './dto/signup.dto';
 import {
@@ -17,8 +18,6 @@ import {
 } from './user.types';
 
 const BCRYPT_COST = 10;
-/** 계약: JWT 만료 1h → 응답 expiresIn = 3600(초). 서명 만료도 동일 상수에서 파생. */
-const EXPIRES_IN_SECONDS = 3600;
 
 @Injectable()
 export class AuthService {
@@ -32,7 +31,9 @@ export class AuthService {
    * 이메일 중복(P2002) → 409. 반환: 계약 User(passwordHash 제외).
    */
   async signup(dto: SignupDto): Promise<UserResponse> {
-    const email = dto.email.trim().toLowerCase();
+    // 이메일 정규화(trim+소문자)는 SignupDto @Transform 이 전역 transform 파이프
+    // 단계에서 이미 수행하므로 여기서는 그대로 사용한다(정규화 단일화).
+    const email = dto.email;
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_COST);
 
     try {
@@ -58,7 +59,8 @@ export class AuthService {
    * 반환: { accessToken, tokenType:"Bearer", expiresIn:3600, user }.
    */
   async login(dto: LoginDto): Promise<AuthTokenResponse> {
-    const email = dto.email.trim().toLowerCase();
+    // 이메일 정규화는 LoginDto @Transform 이 이미 수행(정규화 단일화).
+    const email = dto.email;
 
     const user = await this.prisma.user.findUnique({
       where: { email },

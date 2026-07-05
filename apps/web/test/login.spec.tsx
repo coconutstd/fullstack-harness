@@ -73,6 +73,33 @@ it('AC10: 올바른 자격증명 로그인 성공 → 토큰 저장 + /dashboard
   );
 });
 
+it('M2: 로그인 성공했지만 토큰 저장 실패 → 전역 에러 표시, /dashboard 미이동(무한 루프 방지)', async () => {
+  mockAuthFetch.mockResolvedValue({
+    accessToken: 'jwt.new.token',
+    tokenType: 'Bearer',
+    expiresIn: 3600,
+    user: {
+      id: 'u1',
+      email: 'user@example.com',
+      createdAt: '2026-07-05T12:00:00.000Z',
+      updatedAt: '2026-07-05T12:00:00.000Z',
+    },
+  });
+  // 스토리지 차단 환경 모사: setItem이 예외를 던진다.
+  const spy = jest
+    .spyOn(Storage.prototype, 'setItem')
+    .mockImplementation(() => {
+      throw new DOMException('QuotaExceededError');
+    });
+
+  render(<LoginPage />);
+  fillAndSubmit('user@example.com', 'Password1');
+
+  expect(await screen.findByText(/저장하지 못했습니다/)).toBeInTheDocument();
+  expect(mockReplace).not.toHaveBeenCalledWith('/dashboard');
+  spy.mockRestore();
+});
+
 it('AC5(프론트): 401 → 존재여부 비노출 전역 에러, /dashboard 미이동', async () => {
   mockAuthFetch.mockRejectedValue(
     new ApiError({

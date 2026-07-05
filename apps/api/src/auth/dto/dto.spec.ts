@@ -62,6 +62,22 @@ describe('SignupDto', () => {
     expect(v).toContain('matches');
   });
 
+  it('M6: 72자 초과 비밀번호는 maxLength 위반(bcrypt 72바이트 잘림 방지)', async () => {
+    const v = await violations(SignupDto, {
+      email: 'user@example.com',
+      password: 'Aa1' + 'x'.repeat(70), // 73자
+    });
+    expect(v).toContain('maxLength');
+  });
+
+  it('M6: 72자 비밀번호는 통과한다(경계값)', async () => {
+    const v = await violations(SignupDto, {
+      email: 'user@example.com',
+      password: 'Aa1' + 'x'.repeat(69), // 정확히 72자
+    });
+    expect(v).toHaveLength(0);
+  });
+
   it('@Transform 이 이메일을 소문자+trim 정규화한다', () => {
     const dto = plainToInstance(SignupDto, {
       email: '  USER@Example.COM  ',

@@ -80,6 +80,14 @@ describe('Auth (e2e)', () => {
         .post('/auth/login')
         .send({ email: 'mixedcase@example.com', password: 'Password1' });
       expect(login.status).toBe(200);
+
+      // M9 회귀: 정규화 일원화가 라운드트립을 깨지 않는다.
+      // 로그인도 원본과 다른 대문자 혼용 표기로 성공해야 한다(login-side @Transform 정규화).
+      const loginMixed = await request(server())
+        .post('/auth/login')
+        .send({ email: 'MIXEDcase@Example.COM', password: 'Password1' });
+      expect(loginMixed.status).toBe(200);
+      expect(loginMixed.body.user.email).toBe('mixedcase@example.com');
     });
   });
 

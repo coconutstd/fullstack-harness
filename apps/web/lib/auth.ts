@@ -13,12 +13,18 @@ export function getToken(): string | null {
   }
 }
 
-export function setToken(token: string): void {
-  if (typeof window === 'undefined') return;
+/**
+ * 토큰 저장. 성공 시 true, 실패 시 false 반환.
+ * SSR(window 없음) 또는 localStorage 접근 불가(사파리 프라이빗/QuotaExceeded 등)에서
+ * 예외를 삼키지 않고 false로 실패를 알린다 → 호출부가 리다이렉트를 중단하고 사용자에게 통지 가능.
+ */
+export function setToken(token: string): boolean {
+  if (typeof window === 'undefined') return false;
   try {
     window.localStorage.setItem(TOKEN_KEY, token);
+    return true;
   } catch {
-    // localStorage 접근 불가 시 조용히 무시(SSR/프라이빗 모드)
+    return false;
   }
 }
 
@@ -29,8 +35,4 @@ export function clearToken(): void {
   } catch {
     // no-op
   }
-}
-
-export function isAuthenticated(): boolean {
-  return getToken() !== null;
 }

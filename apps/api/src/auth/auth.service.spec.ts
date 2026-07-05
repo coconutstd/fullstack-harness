@@ -73,11 +73,13 @@ describe('AuthService', () => {
       expect(result).not.toHaveProperty('passwordHash');
     });
 
-    it('이메일을 소문자+trim 정규화하고 비밀번호를 bcrypt 해시로 저장한다', async () => {
+    it('DTO 가 정규화한 이메일을 그대로 저장하고 비밀번호를 bcrypt 해시로 저장한다', async () => {
       prisma.user.create.mockResolvedValue(persistedUser);
 
+      // 이메일 정규화(trim+소문자)는 SignupDto @Transform 이 파이프 단계에서 수행하므로
+      // 서비스는 이미 정규화된 값을 받는다(정규화 단일화 — dto.spec.ts 가 Transform 을 검증).
       await service.signup({
-        email: '  USER@Example.COM  ',
+        email: 'user@example.com',
         password: 'Password1',
       });
 

@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsEmail, IsString, Matches, MinLength } from 'class-validator';
+import { IsEmail, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 
 /**
  * POST /auth/signup 요청 body 검증.
@@ -16,6 +16,11 @@ export class SignupDto {
 
   @IsString()
   @MinLength(8)
+  // bcrypt 는 72바이트 초과분을 조용히 잘라내므로, 잘림으로 인한 혼란을 막기 위해
+  // 최대 길이를 72자로 제한한다.
+  @MaxLength(72, {
+    message: 'password는 최대 72자까지 가능합니다',
+  })
   @Matches(/^(?=.*[A-Za-z])(?=.*\d).{8,}$/, {
     message: 'password는 최소 8자, 문자와 숫자를 포함해야 합니다',
   })

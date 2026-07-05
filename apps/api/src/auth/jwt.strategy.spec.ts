@@ -20,8 +20,11 @@ describe('JwtStrategy.validate', () => {
   beforeEach(() => {
     prisma = { user: { findUnique: jest.fn() } };
     const config = {
-      get: (key: string) =>
-        key === 'JWT_SECRET' ? 'test-secret-hs256' : undefined,
+      // resolveJwtSecret 은 미주입 시 fail-fast 하도록 getOrThrow 를 사용한다.
+      getOrThrow: (key: string) => {
+        if (key === 'JWT_SECRET') return 'test-secret-hs256';
+        throw new Error(`missing config: ${key}`);
+      },
     } as unknown as ConfigService;
     strategy = new JwtStrategy(config, prisma as unknown as PrismaService);
   });

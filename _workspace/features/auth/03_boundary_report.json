@@ -116,5 +116,102 @@
     "backend-impl: 경계면 shape 이슈 없음. 수정 요청 사항 없음.",
     "frontend-impl: 경계면 shape 이슈 없음. .data 언랩·fieldErrors 잔재 없음(확인 완료). 수정 요청 사항 없음.",
     "test-suite(Phase5)로 이관: 정적 3자 대조는 통과. Node/DB 기동 후 실런타임(회원가입→로그인→me 라운드트립, 실제 401/409/400 응답 body) 실행 검증 필요."
+  ],
+  "reVerifications": [
+    {
+      "runId": "reverify-2026-07-05-post-review-fixes",
+      "role": "boundary-verifier",
+      "trigger": "리뷰 리포트 기반 결함 수정 적용 후 경계면 재검증 (apps/api: M1·M4·M6·M7·M9, apps/web: M2·M5·M8·M10)",
+      "checkedAt": "2026-07-05 (수정 반영 직후 2차 교차검증)",
+      "method": "01_api_contract.json을 정답지로 백엔드 소스(controller/service/dto/user.types/main/app.module)와 프론트 소스(lib/api,types,auth,validation,useAuthForm + AuthForm/login/signup/dashboard)를 동시에 열어 3자 대조. 추가로 apps/api·apps/web 양쪽 tsc --noEmit 실증(둘 다 exit 0).",
+      "verificationEnvironmentNote": "정적 타입체크는 실제 구동으로 실증 완료(api tsc exit=0, web tsc exit=0). ThrottlerException 응답 shape는 @nestjs/throttler 6.5.0 소스로 확인. Node/DB 기동 실런타임 라운드트립은 Phase 5 test-suite 몫.",
+      "contractUnchanged": true,
+      "contractUnchangedNote": "01_api_contract.json 미변경 확인. 수정은 구현/프론트에 국한, 계약 shape·엔드포인트·상태표 그대로.",
+      "summary": {
+        "total": 8,
+        "pass": 8,
+        "fail": 0,
+        "unverified": 0,
+        "verdict": "결함 수정 후에도 경계면 계약 위반 없음. shape·래핑·casing·엔드포인트매핑 불변, 신규 429는 프론트 else 경로로 무해 처리, setToken(boolean) 소비 정상, 이메일 정규화 단일화 정합."
+      },
+      "items": [
+        {
+          "focus": "1. 응답 shape 불변 (login/signup/me)",
+          "check": "AuthTokenResponse·User shape·wrapping·casing 3자(계약/백엔드/프론트) 일치",
+          "status": "pass",
+          "detail": "login: service.login 반환 {accessToken,tokenType:'Bearer',expiresIn:EXPIRES_IN_SECONDS(3600),user:toUserResponse}=계약 AuthTokenResponse=web types.ts AuthTokenResponse. signup: service.signup→toUserResponse(4필드,ISO string)=계약 User=web User. me: controller.me가 CurrentUser(UserResponse) 그대로 반환=계약 User=web User. 모두 unwrapped 순수객체, camelCase, passwordHash 미포함(select 열거+toUserResponse 명시매핑). 소비: login onSuccess res.accessToken 최상위, dashboard me 전체 소비. 일치.",
+          "producer": "apps/api/src/auth/auth.service.ts:33-94, auth.controller.ts:25-42, user.types.ts:30-42",
+          "consumer": "apps/web/lib/types.ts:8-24, app/login/page.tsx:19-28, app/dashboard/page.tsx:33-35",
+          "severity": null
+        },
+        {
+          "focus": "2. 엔드포인트↔호출 1:1",
+          "check": "authFetch 호출 경로 = Nest 컨트롤러 라우트",
+          "status": "pass",
+          "detail": "백엔드 라우트 3개: POST /auth/signup, POST /auth/login, GET /auth/me. 프론트 호출: useAuthForm endpoint('/auth/signup' via signup page, '/auth/login' via login page)로 authFetch POST, dashboard authFetch('/auth/me',GET). 메서드·경로 정확히 1:1. 백엔드有-프론트無 또는 프론트有-백엔드無(404) 없음. Bearer 부착 위치도 me(auth:true)에만 유효히 동작(api.ts:69-72 토큰 존재 시 자동부착).",
+          "producer": "apps/api/src/auth/auth.controller.ts:23-41",
+          "consumer": "apps/web/lib/useAuthForm.ts:85, app/dashboard/page.tsx:33, lib/api.ts:69-72",
+          "severity": null
+        },
+        {
+          "focus": "3. M4 신규 429 (throttle) 프론트 무해 처리",
+          "check": "login 5/분·signup 10/분 초과 시 429 → 프론트가 unhandled로 크래시하지 않는지",
+          "status": "pass",
+          "detail": "백엔드: @Throttle(login limit5/signup limit10, ttl60s) + 전역 ThrottlerGuard(APP_GUARD). 초과 시 ThrottlerException(@nestjs/throttler 6.5.0)이 HttpException(message:'ThrottlerException: Too Many Requests', 429) throw → 응답 {statusCode:429, message:string}(error 필드 없음). 프론트: api.ts isErrorShape는 statusCode+message만 확인→true, toMessages(string)→[msg], errorType=body.error??'Error'='Error'로 ApiError(status:429) 구성. useAuthForm catch: instanceof ApiError→mapApiError(login은 401만/signup은 409만 처리)→undefined→status!==400→else 경로 '잠시 후 다시 시도해주세요.' 전역표시. 계약에 없는 상태지만 크래시 없이 사용자에게 표시됨. filter/undefined 접근 등 런타임 크래시 지점 없음.",
+          "producer": "apps/api/src/auth/auth.controller.ts:22,30, app.module.ts:14-21, node_modules/@nestjs/throttler/dist/throttler.exception.js",
+          "consumer": "apps/web/lib/api.ts:39-52,96-110, lib/useAuthForm.ts:100-111, app/login/page.tsx:31-34, app/signup/page.tsx:22-25",
+          "severity": null
+        },
+        {
+          "focus": "4. M2 setToken(boolean) 시그니처 소비",
+          "check": "setToken 반환값 소비 + 저장 실패 시 리다이렉트 중단·에러 표시 코드 경로",
+          "status": "pass",
+          "detail": "auth.ts setToken이 성공 true/실패(SSR·스토리지 차단·QuotaExceeded) false 반환. login onSuccess: if(setToken(res.accessToken)) return {type:'redirect',...} else return {type:'error',message:'로그인 상태를 저장하지 못했습니다...'}. useAuthForm handleSubmit: outcome.type==='redirect'→router.replace/push 후 return; 아니면 setGlobalError(outcome.message)+setStatus('error')로 리다이렉트 중단·에러 표시. 예외 삼킴 없이 false로 실패 전파, 무한 리다이렉트 루프 방지. tsc 통과로 시그니처 정합 실증(AuthSubmitResult 유니온). signup은 setToken 미사용(토큰 미발급 계약과 정합).",
+          "producer": "apps/web/lib/auth.ts:21-29",
+          "consumer": "apps/web/app/login/page.tsx:19-28, lib/useAuthForm.ts:89-97",
+          "severity": null
+        },
+        {
+          "focus": "5. M9 이메일 정규화 일원화",
+          "check": "DTO @Transform 단일 지점 정규화 + 프론트 normalizeEmail 정합(대소문자 signup→login)",
+          "status": "pass",
+          "detail": "백엔드: SignupDto·LoginDto 모두 email에 @Transform(trim().toLowerCase()) 단일 적용(ValidationPipe transform:true 단계). service.signup/login은 dto.email 그대로 사용(재정규화 없음)→저장/조회 정규화 일원화. 프론트: validation.normalizeEmail(trim+toLowerCase)를 useAuthForm body 구성 시 적용(대칭). 시나리오: 'User@Example.com' signup→저장 'user@example.com'; 'USER@EXAMPLE.COM' login→DTO 정규화 'user@example.com'→findUnique 매칭 성공. 프론트·백엔드 정규화 규칙 동일(trim+lowercase)로 이중적용해도 멱등, 불일치 없음.",
+          "producer": "apps/api/src/auth/dto/signup.dto.ts:11-15, dto/login.dto.ts:11-16, auth.service.ts:36,63",
+          "consumer": "apps/web/lib/validation.ts:8-10, lib/useAuthForm.ts:82",
+          "severity": null
+        },
+        {
+          "focus": "에러 포맷 400/401/409 불변",
+          "check": "수정 후에도 계약 errorShape 준수(400 string[], 401/409 string)",
+          "status": "pass",
+          "detail": "백엔드 main.ts 전역 ValidationPipe(whitelist,transform), 커스텀 예외필터 없음→Nest 기본 포맷 유지. 400: message string[](SignupDto MaxLength(72) 신규 메시지도 배열 항목으로 합류, 포맷 불변). 401: login UnauthorizedException(string), me 가드 401. 409: signup ConflictException(string). 프론트 toMessages가 배열/단일 모두 정규화, useAuthForm 400→messages.join(' · '), login 401·signup 409는 mapApiError 전용 처리. 일치.",
+          "producer": "apps/api/src/main.ts:10-15, auth.service.ts:50,80, dto/signup.dto.ts:21-26",
+          "consumer": "apps/web/lib/api.ts:39-52, lib/useAuthForm.ts:100-108",
+          "severity": null
+        },
+        {
+          "focus": "빌드/타입 실증",
+          "check": "apps/api·apps/web tsc --noEmit",
+          "status": "pass",
+          "detail": "api: npx tsc --noEmit exit=0. web: npx tsc --noEmit exit=0. 제네릭 authFetch<T>·AuthSubmitResult 유니온·setToken boolean 시그니처가 타입 레벨에서 소비부와 정합. any/as 우회로 가려진 shape 불일치 없음(타입 오류 0건).",
+          "producer": "apps/api",
+          "consumer": "apps/web",
+          "severity": null
+        },
+        {
+          "focus": "계약 불변",
+          "check": "01_api_contract.json 미변경",
+          "status": "pass",
+          "detail": "계약 파일의 endpoints·types(User/AuthTokenResponse)·errorStatusTable·conventions 모두 그대로. 수정은 구현/프론트에 국한. 429는 계약에 추가되지 않음(운영 방어 계층으로 계약 외 상태, 프론트 무해 처리로 흡수).",
+          "severity": null
+        }
+      ],
+      "openIssuesForPM": [],
+      "notesForTeamB": [
+        "backend-impl: 경계면 이슈 없음. M1·M4·M6·M7·M9 수정이 계약 shape/에러포맷/엔드포인트를 깨지 않음. 429는 계약 외 상태지만 프론트가 흡수하므로 백엔드 추가 조치 불필요.",
+        "frontend-impl: 경계면 이슈 없음. M2 setToken(boolean) 소비·M5 useAuthForm 공통화·429 else 처리 모두 정합. 수정 요청 없음.",
+        "test-suite(Phase5)로 이관: Node/DB 기동 후 실런타임 검증 필요 — (a) 실제 429 body가 브라우저 fetch에서 정상 파싱/표시되는지, (b) 대소문자 이메일 signup→login 라운드트립, (c) 스토리지 차단 환경에서 setToken false→에러표시 UI."
+      ]
+    }
   ]
 }

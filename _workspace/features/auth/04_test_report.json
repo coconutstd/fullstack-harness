@@ -200,5 +200,122 @@
     "acceptanceCriteria 10건 전부 실행으로 검증 통과. 재구현/수정 요청 없음 — 기능 완료 게이트 통과.",
     "환경 제약으로 '실 PostgreSQL 마이그레이션 실행'과 '실 브라우저 네비게이션'만 unverified. 나머지는 인메모리 HTTP e2e + 컴포넌트 렌더로 실행 대체 검증. 로컬 DB 기동 시 위 runCommands로 실 DB e2e 재현 가능.",
     "테스트 하네스 구성 파일 추가됨: apps/api/{jest.config.js,jest-e2e.config.js} + package.json test 스크립트, apps/web/{jest.config.js,tsconfig.jest.json,test/setup.ts} + tsconfig exclude 'test'(next build 무영향). devDependencies 추가(jest/ts-jest/supertest/testing-library 등)."
+  ],
+  "regressionRuns": [
+    {
+      "ranAt": "2026-07-05",
+      "role": "test-suite",
+      "phase": "5",
+      "trigger": "코드 리뷰 리포트(_workspace/review/report.md) 결함 수정 9건(M1·M2·M4·M5·M6·M7·M8·M9·M10, M3 제외) 적용 후 회귀 통합 검증",
+      "oracles": ["_workspace/review/report.md", "00_requirements.json", "01_api_contract.json"],
+      "environment": {
+        "node": "v24.18.0 (시스템 nvm)",
+        "install": "apps/api·apps/web 기존 node_modules 재사용, 재설치 불필요",
+        "db": "실 PostgreSQL 미기동 → 인메모리 Prisma fake 로 HTTP e2e 구동(기존과 동일). Prisma 마이그레이션 실행은 여전히 unverified."
+      },
+      "summary": {
+        "totalTests": 75,
+        "passed": 75,
+        "failed": 0,
+        "skipped": 0,
+        "breakdown": "backend-unit 30 + backend-e2e 11 + frontend 34",
+        "delta": "이전 71 → 75 (+4). backend-unit +4(auth.constants.spec.ts 신규). e2e 11 유지(M9 mixed-case 로그인 assertion을 기존 AC3 테스트에 추가). frontend 34 유지.",
+        "verdict": "전체 그린. 결함 수정 회귀 커버 완료. 실제 결함/재구현 필요 없음."
+      },
+      "commands": {
+        "backendUnit": "cd apps/api && npm test  → 30 passed",
+        "backendE2e": "cd apps/api && npm run test:e2e  → 11 passed",
+        "frontend": "cd apps/web && npx jest --config jest.config.js  → 34 passed (web엔 npm test 스크립트 없음)"
+      },
+      "regressionCoverage": [
+        {
+          "id": "M1",
+          "title": "JWT 시크릿 fail-fast (하드코딩 폴백 제거 → getOrThrow)",
+          "status": "added",
+          "test": "apps/api/src/auth/auth.constants.spec.ts (신규, 4 케이스)",
+          "verifies": "resolveJwtSecret(new ConfigService({}))→throw(실 @nestjs/config 로 fail-fast 실증), 주입 시 그 값 반환, 알려진 dev 폴백 문자열('dev-secret-change-me-in-production')로 대체 안 됨",
+          "codeConfirmed": "auth.constants.ts:17 config.getOrThrow, auth.module.ts:17 + jwt.strategy.ts:19 단일 헬퍼 공유(서명≡검증)"
+        },
+        {
+          "id": "M2",
+          "title": "setToken 실패 시 리다이렉트 중단(무한 로그인 루프 방지)",
+          "status": "covered",
+          "test": "apps/web/test/login.spec.tsx 'M2: 로그인 성공했지만 토큰 저장 실패 → 전역 에러 표시, /dashboard 미이동'",
+          "verifies": "Storage.setItem이 QuotaExceededError throw하는 환경에서 로그인 200 응답에도 router.replace('/dashboard') 미호출 + 전역 에러 표시. setToken()이 boolean 반환(auth.ts:21)하고 useAuthForm onSuccess가 {type:'error'} 처리(useAuthForm.ts:96)."
+        },
+        {
+          "id": "M4",
+          "title": "login 5/분·signup 10/분 스로틀(초과 429)",
+          "status": "known-limitation",
+          "reason": "app.module.ts ThrottlerModule.skipIf(()=>NODE_ENV==='test')로 테스트 환경 스로틀 비활성 → 429를 유닛/e2e에서 실행 검증 불가(의도된 설계).",
+          "codeConfirmed": "auth.controller.ts:22 @Throttle({default:{limit:10,ttl:60000}})(signup) + :30 limit:5(login), app.module.ts APP_GUARD=ThrottlerGuard + 전역 60/분 forRoot. @nestjs/throttler import 존재. 스로틀 로직/데코레이터/가드 배선 모두 정적 확인됨.",
+          "note": "429 실동작은 NODE_ENV 비-test 부팅 후 반복 요청으로만 재현 가능. 무리한 NODE_ENV 조작 테스트는 지시대로 생략."
+        },
+        {
+          "id": "M5",
+          "title": "login/signup 중복 제거(useAuthForm/AuthForm 추출) — 순수 리팩터",
+          "status": "covered",
+          "test": "apps/web/test/login.spec.tsx (LoginPage→AuthForm→useAuthForm 체인 실렌더+제출)",
+          "verifies": "추출된 공통 폼 로직 경유로 화면 렌더·정규화 body 제출·성공 라우팅·401 분기 동작 불변. 동작 회귀 없음."
+        },
+        {
+          "id": "M6",
+          "title": "password 최대 72자 제약(bcrypt 72바이트 잘림 경계)",
+          "status": "covered",
+          "test": "apps/api/src/auth/dto/dto.spec.ts 'M6: 72자 초과 → maxLength 위반', 'M6: 72자 경계값 통과'",
+          "verifies": "73자↑ signup → @MaxLength(72) 위반(400 유발), 정확히 72자는 통과. signup.dto.ts:21 @MaxLength(72) 확인."
+        },
+        {
+          "id": "M7",
+          "title": "토큰 수명 단일 상수 파생(1h/3600 이중선언 제거)",
+          "status": "covered",
+          "test": "apps/api/src/auth/auth.constants.spec.ts 'EXPIRES_IN_SECONDS=3600' + auth.service.spec exp-iat=3600 + e2e expiresIn=3600",
+          "verifies": "EXPIRES_IN_SECONDS 단일 상수를 auth.module signOptions.expiresIn 과 auth.service 응답 expiresIn 이 함께 파생 → 응답값과 실 TTL 일치."
+        },
+        {
+          "id": "M8",
+          "title": "redirect-if-authenticated 훅 추출(useRedirectIfAuthenticated)",
+          "status": "covered",
+          "test": "login 렌더 시 useAuthForm→useRedirectIfAuthenticated 실행 + apps/web/test/dashboard.spec.tsx 게스트 가드(토큰없음→/login, /me 미호출)",
+          "verifies": "게스트 가드/리다이렉트 정책 단일화 후 라우팅 동작 불변."
+        },
+        {
+          "id": "M9",
+          "title": "이메일 정규화 일원화 라운드트립(서비스 재정규화 제거)",
+          "status": "added",
+          "test": "apps/api/test/auth.e2e-spec.ts AC3 'MixedCase 가입' 테스트에 mixed-case 로그인 assertion 추가",
+          "verifies": "'MixedCase@Example.com' 가입 → 저장 email 'mixedcase@example.com', 소문자 로그인 200(기존), 그리고 'MIXEDcase@Example.COM'(원본과 다른 대문자 혼용) 로그인도 200 + user.email 소문자 정규화. DTO @Transform 단일 정규화가 signup·login 라운드트립을 깨지 않음 실증."
+        },
+        {
+          "id": "M10",
+          "title": "죽은 코드 isAuthenticated() 제거 — 순수 리팩터",
+          "status": "covered",
+          "test": "정적: grep 'isAuthenticated' app/lib/test → 0건(테스트 잔재 없음). 동작: 기존 login/dashboard 컴포넌트 테스트 그린.",
+          "verifies": "제거 후 페이지 가드는 getToken() 직접 사용 경로로 동작 불변, dangling 참조 없음."
+        }
+      ],
+      "excluded": [
+        {
+          "id": "M3",
+          "reason": "리뷰 리포트에서 PLAUSIBLE(방어심층/아키텍처 결정, 즉시 악용 벡터 없음)으로 수정 대상에서 제외됨. 이번 회귀 검증 스코프 밖."
+        }
+      ],
+      "defectsFound": [],
+      "reimplementationNeeded": false,
+      "filesAddedOrChanged": [
+        "apps/api/src/auth/auth.constants.spec.ts (신규 — M1 fail-fast 4케이스)",
+        "apps/api/test/auth.e2e-spec.ts (M9 mixed-case 로그인 assertion 추가)"
+      ],
+      "unverified": [
+        "실 PostgreSQL 마이그레이션 실행 및 실 DB 통합(환경에 DB 미기동, 인메모리 fake로 대체) — 기존과 동일 제약",
+        "실 브라우저 네비게이션 E2E(Playwright 미구성)",
+        "M4 스로틀 429 실동작(테스트 환경 skipIf로 비활성 — 의도된 설계상 미검증)"
+      ],
+      "notesForPM": [
+        "결함 수정 9건 전부 회귀 관점에서 커버됨(covered 6 / added 2[M1·M9] / known-limitation 1[M4]). 실제 결함·재구현 필요 없음.",
+        "전체 75/75 그린. M1은 폴백 시크릿이 사라지고 미주입 시 실제로 throw함을 실 ConfigService로 실증, M9는 정규화 일원화가 대소문자 혼용 로그인 라운드트립을 깨지 않음을 e2e로 실증.",
+        "M4만 테스트 환경 스로틀 비활성(skipIf NODE_ENV=test)으로 429 실행 검증 불가 — 데코레이터·가드·한도 설정은 정적 확인 완료. 로컬에서 NODE_ENV!=test 부팅 후 반복 요청으로 재현 가능."
+      ]
+    }
   ]
 }
