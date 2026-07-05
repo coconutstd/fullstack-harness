@@ -1,0 +1,182 @@
+{
+  "feature": "auth",
+  "role": "frontend-impl",
+  "phase": 3,
+  "app": "apps/web",
+  "framework": "Next.js 14.2.5 App Router + TypeScript",
+  "generatedAt": "2026-07-05",
+  "contractSource": "01_api_contract.json",
+  "reconciliationSource": "01_design_reconciliation.md",
+  "conventions": {
+    "successWrapping": "unwrapped (평면, 순수 객체 직접 반환 — .data 언랩 없음)",
+    "errorShape": "{ statusCode: number, message: string | string[], error: string }",
+    "errorMessageRule": "400=string[](검증 배열), 401/409=string",
+    "tokenStorage": "localStorage key 'auth.accessToken'",
+    "baseUrl": "http://localhost:3001 via NEXT_PUBLIC_API_URL",
+    "devPort": 3000
+  },
+  "files": {
+    "scaffolding": [
+      "apps/web/package.json",
+      "apps/web/tsconfig.json",
+      "apps/web/next.config.mjs",
+      "apps/web/next-env.d.ts",
+      "apps/web/.env.local",
+      "apps/web/.gitignore",
+      "apps/web/app/layout.tsx",
+      "apps/web/app/globals.css"
+    ],
+    "lib": [
+      "apps/web/lib/types.ts",
+      "apps/web/lib/auth.ts",
+      "apps/web/lib/api.ts",
+      "apps/web/lib/validation.ts"
+    ],
+    "components": [
+      "apps/web/components/AuthCard.tsx",
+      "apps/web/components/FieldError.tsx",
+      "apps/web/components/FormError.tsx",
+      "apps/web/components/LoadingView.tsx",
+      "apps/web/components/ErrorView.tsx",
+      "apps/web/components/ProfileCard.tsx",
+      "apps/web/components/LogoutButton.tsx"
+    ],
+    "pages": [
+      "apps/web/app/page.tsx",
+      "apps/web/app/signup/page.tsx",
+      "apps/web/app/login/page.tsx",
+      "apps/web/app/dashboard/page.tsx"
+    ]
+  },
+  "types": {
+    "location": "apps/web/lib/types.ts",
+    "derivedFromContract": true,
+    "definitions": {
+      "User": { "id": "string", "email": "string", "createdAt": "string(ISO8601)", "updatedAt": "string(ISO8601)" },
+      "AuthTokenResponse": { "accessToken": "string", "tokenType": "string", "expiresIn": "number", "user": "User" },
+      "ApiErrorShape": { "statusCode": "number", "message": "string | string[]", "error": "string" },
+      "SignupRequest": { "email": "string", "password": "string" },
+      "LoginRequest": { "email": "string", "password": "string" }
+    },
+    "note": "passwordHash 미포함. 계약 types 및 응답 shape과 1:1. 제네릭 캐스팅으로 shape 우기지 않음(any/as 미사용)."
+  },
+  "apiClient": {
+    "location": "apps/web/lib/api.ts",
+    "helper": "authFetch<T>(path, init): Promise<T>",
+    "responseParsing": "성공 응답을 unwrapped 평면으로 간주 → 파싱한 JSON을 그대로 T로 반환. .data 언랩 없음. 목록 엔드포인트 없어 언랩 대상 없음.",
+    "authHeader": "getToken() 존재 시 Authorization: Bearer <token> 자동 부착. body 존재 & Content-Type 미지정 시 application/json 자동.",
+    "errorParsing": "!res.ok → 본문을 { statusCode, message, error }로 파싱해 ApiError throw. ApiError.messages는 message를 항상 string[]로 정규화(400 배열 그대로, 401/409 단일 → [msg]). ApiError.status/errorType 보존. fetch 자체 실패(네트워크) → status:0, isNetworkError:true.",
+    "errorClass": "ApiError { status, messages: string[], errorType, isNetworkError }",
+    "discardedAssumption": "ui_spec의 error.fieldErrors 구조는 정합서대로 폐기. 400 message:string[]를 폼 전역 에러 영역에 표시."
+  },
+  "screens": [
+    {
+      "route": "/",
+      "filePath": "apps/web/app/page.tsx",
+      "rendering": "server",
+      "behavior": "redirect('/login')",
+      "endpoints": []
+    },
+    {
+      "route": "/signup",
+      "filePath": "apps/web/app/signup/page.tsx",
+      "rendering": "client",
+      "endpoints": [
+        {
+          "call": "POST /auth/signup",
+          "hookType": "authFetch<User>",
+          "consumesResponseType": "User (201, unwrapped)",
+          "consumesFields": [],
+          "note": "성공 응답 필드를 화면에서 직접 소비하지 않음(성공 시 /login?signup=success 이동). accessToken 미소비."
+        }
+      ],
+      "clientValidation": "email RFC 형식 + trim/toLowerCase, password 최소 8자 + 문자1 + 숫자1",
+      "errorHandling": {
+        "400": "message:string[]를 ' · '로 join하여 FormError 전역 표시",
+        "409": "message[0] 또는 '이미 사용 중인 이메일입니다.' 전역 표시",
+        "5xx|network": "'잠시 후 다시 시도해주세요.' 전역 표시"
+      },
+      "navigatesTo": { "success": "/login?signup=success", "alreadyAuthenticated": "/dashboard" },
+      "submitDisableWhileSubmitting": true
+    },
+    {
+      "route": "/login",
+      "filePath": "apps/web/app/login/page.tsx",
+      "rendering": "client",
+      "endpoints": [
+        {
+          "call": "POST /auth/login",
+          "hookType": "authFetch<AuthTokenResponse>",
+          "consumesResponseType": "AuthTokenResponse (200, unwrapped)",
+          "consumesFields": ["accessToken"],
+          "onSuccess": "setToken(res.accessToken) 후 router.replace('/dashboard'). user는 저장 안 함(대시보드에서 /auth/me 재조회)."
+        }
+      ],
+      "clientValidation": "email RFC 형식 + trim/toLowerCase, password required",
+      "errorHandling": {
+        "400": "message:string[] join하여 전역 표시",
+        "401": "'이메일 또는 비밀번호가 올바르지 않습니다.' 전역 표시(존재 여부 비노출, 필드 구분 금지)",
+        "5xx|network": "'잠시 후 다시 시도해주세요.' 전역 표시"
+      },
+      "navigatesTo": { "success": "/dashboard", "alreadyAuthenticated": "/dashboard" },
+      "notes": "useSearchParams(signup=success 성공 배너) 사용 → Suspense 경계로 감쌈(빌드 요구).",
+      "submitDisableWhileSubmitting": true
+    },
+    {
+      "route": "/dashboard",
+      "filePath": "apps/web/app/dashboard/page.tsx",
+      "rendering": "client",
+      "guard": "마운트 시 getToken() 없으면 router.replace('/login'). 판정/요청 중 LoadingView(콘텐츠 미노출).",
+      "endpoints": [
+        {
+          "call": "GET /auth/me",
+          "hookType": "authFetch<User>",
+          "consumesResponseType": "User (200, unwrapped)",
+          "consumesFields": ["email", "createdAt"],
+          "requestHeaders": { "Authorization": "Bearer <accessToken> (authFetch 자동)" },
+          "display": "ProfileCard: email 주표시 + createdAt 가입일"
+        }
+      ],
+      "errorHandling": {
+        "401": "clearToken() 후 router.replace('/login') (에러 화면 없이)",
+        "5xx|network": "ErrorView + '다시 시도' 버튼(loadProfile 재호출)"
+      },
+      "actions": {
+        "logout": "clearToken() 후 router.replace('/login'). 서버 호출 없음."
+      },
+      "navigatesTo": { "unauthenticated|tokenExpired": "/login", "logout": "/login" }
+    }
+  ],
+  "linkIntegrity": {
+    "checked": true,
+    "links": [
+      { "from": "/", "to": "/login", "via": "redirect", "exists": true },
+      { "from": "/signup", "to": "/login", "via": "Link + router.push", "exists": true },
+      { "from": "/signup", "to": "/dashboard", "via": "router.replace(alreadyAuthenticated)", "exists": true },
+      { "from": "/login", "to": "/signup", "via": "Link", "exists": true },
+      { "from": "/login", "to": "/dashboard", "via": "router.replace", "exists": true },
+      { "from": "/dashboard", "to": "/login", "via": "router.replace(guard/401/logout)", "exists": true }
+    ],
+    "note": "모든 목적지가 실제 app/ page 경로와 매칭. route group 미사용."
+  },
+  "selfCheck": {
+    "hookGenericMatchesContractShape": true,
+    "unwrappedResponsesHandled": "N/A — 계약이 unwrapped 평면(래핑 없음). 언랩 대상 없음, T를 직접 반환.",
+    "fieldNamesCamelCaseMatchContract": true,
+    "noAnyOrAsToMaskMismatch": true,
+    "allLinksMatchRealPages": true,
+    "noFinalFieldAccessOn202": "N/A — async 엔드포인트 없음(계약 전부 async:false)"
+  },
+  "verification": {
+    "typecheck": { "command": "npx tsc --noEmit", "result": "PASS" },
+    "build": { "command": "next build (npm run build)", "result": "PASS", "routes": ["/", "/_not-found", "/dashboard", "/login", "/signup"], "note": "7 static pages 생성, 타입 검증 통과." },
+    "runtimeNote": "환경에 Node.js 미설치 → 스크래치패드에 portable Node 20.15.1 내려받아 install/typecheck/build 실행. 시스템 전역 변경 없음. 의존성 설치: npm install (28 packages)."
+  },
+  "boundaryVerifierNotes": [
+    "성공 응답은 unwrapped 평면 전제. 백엔드가 { data: ... } 래핑을 반환하면 authFetch<T>가 T와 불일치 → 런타임 크래시. 계약(successWrapping.policy=unwrapped) 준수 필요.",
+    "login 응답 최상위 accessToken 필드명 필수. 중첩(예: user.accessToken)이면 setToken 실패.",
+    "에러는 반드시 { statusCode, message, error }. 400 message는 string[]여야 함(class-validator ValidationPipe 기본). Nest ValidationPipe가 필드맵을 반환하도록 커스터마이즈되면 ApiError.messages 정규화가 어긋남.",
+    "GET /auth/me 응답은 User 평면(passwordHash 미포함). user 래핑({user:{...}})이면 dashboard의 authFetch<User> 불일치.",
+    "backend-impl 완료 알림 수신 시 세 엔드포인트 실연동 확인 예정(현재는 계약 타입 기준 선구현)."
+  ]
+}

@@ -1,0 +1,204 @@
+{
+  "feature": "auth",
+  "phase": "5",
+  "role": "test-suite",
+  "ranAt": "2026-07-05",
+  "oracles": ["00_requirements.json", "01_api_contract.json", "01_db_migration_plan.md", "03_boundary_report.json"],
+  "environment": {
+    "node": "v20.15.1 (스크래치패드 이식형)",
+    "nodePath": "/private/tmp/claude-501/-Users-user-codebase-meta-harness/0ef20a7c-aee4-4309-8ae9-8919abcb7780/scratchpad/node-v20.15.1-darwin-arm64/bin",
+    "install": "apps/api: npm install(690 pkg) + prisma generate 성공 / bcrypt 네이티브 빌드 성공 / apps/web: jest+ts-jest+jsdom+testing-library devDep 설치",
+    "db": "시스템 PostgreSQL/Docker 미기동 → 실제 DB 없이 인메모리 Prisma fake 로 HTTP e2e 전 계층 구동. Prisma 마이그레이션 실행 검증은 unverified.",
+    "note": "boundary-verifier(03) 정적 3자 shape 대조는 PASS 상태. 본 리포트는 그 위에서 실행 동작(HTTP 응답·상태코드·가드·라우팅·토큰)만 실행 검증."
+  },
+  "summary": {
+    "totalTests": 67,
+    "passed": 67,
+    "failed": 0,
+    "skipped": 0,
+    "testFiles": 9,
+    "verdict": "acceptanceCriteria 10/10 실행 검증 통과. 심각 결함 없음. 재구현 요청 없음."
+  },
+  "suites": [
+    {
+      "name": "backend-unit (AuthService/DTO/JwtStrategy)",
+      "type": "backend-unit",
+      "runner": "jest + ts-jest (DB 불필요, PrismaService mock)",
+      "command": "cd apps/api && npm test",
+      "config": "apps/api/jest.config.js",
+      "files": [
+        "apps/api/src/auth/auth.service.spec.ts",
+        "apps/api/src/auth/dto/dto.spec.ts",
+        "apps/api/src/auth/jwt.strategy.spec.ts"
+      ],
+      "passed": 24,
+      "failed": 0,
+      "covers": [
+        "signup: 성공 User 반환·이메일 소문자정규화·bcrypt 해시·select에 passwordHash 제외",
+        "signup: P2002→409 ConflictException, 기타 오류 전파",
+        "login: accessToken/Bearer/3600/user, HS256+payload{sub,email}+exp-iat=3600, 틀린시크릿 검증실패",
+        "login: 없는이메일과 틀린비번의 401 메시지·상태 구별 불가(존재여부 비노출)",
+        "DTO: SignupDto 이메일형식/최소8자/문자+숫자 정규식, @Transform 소문자화; LoginDto isNotEmpty",
+        "JwtStrategy.validate: subject 존재→User(비번제외), 없음→401, select 4필드"
+      ]
+    },
+    {
+      "name": "backend-e2e (실 HTTP 스택, supertest)",
+      "type": "backend-e2e",
+      "runner": "jest + supertest + @nestjs/testing, PrismaService override(InMemoryPrisma)",
+      "command": "cd apps/api && npm run test:e2e",
+      "config": "apps/api/jest-e2e.config.js",
+      "files": [
+        "apps/api/test/auth.e2e-spec.ts",
+        "apps/api/test/in-memory-prisma.ts"
+      ],
+      "passed": 11,
+      "failed": 0,
+      "note": "main.ts와 동일한 전역 ValidationPipe + JwtAuthGuard + 예외필터를 실제 라우팅으로 통과시켜 실호출 검증. UNIQUE 위반은 인메모리 fake가 실제 Prisma처럼 P2002를 던져 409 매핑 경로를 구동.",
+      "covers": [
+        "POST /auth/signup 201 User(비번제외) / 중복 409(error:Conflict) / 400 message:string[](error:Bad Request) / 이메일 소문자정규화 저장",
+        "POST /auth/login 200 accessToken/Bearer/3600/user / 틀린비번 401 / 없는이메일 401 동일메시지",
+        "GET /auth/me 토큰없음 401 / 잘못된토큰 401 / 유효토큰 200 프로필(비번제외)",
+        "통합 라운드트립: signup→login→me 동일 주체 id 일관"
+      ]
+    },
+    {
+      "name": "frontend-logic (lib/validation·auth·api)",
+      "type": "frontend-unit",
+      "runner": "jest + ts-jest + jsdom",
+      "command": "cd apps/web && npx jest --config jest.config.js",
+      "config": "apps/web/jest.config.js",
+      "files": [
+        "apps/web/test/validation.spec.ts",
+        "apps/web/test/auth.spec.ts",
+        "apps/web/test/api.spec.ts"
+      ],
+      "passed": 27,
+      "failed": 0,
+      "covers": [
+        "validation: 이메일 형식·비밀번호 정책(8자+문자+숫자) 유효/무효 경계, 소문자정규화",
+        "auth: setToken/getToken/clearToken/isAuthenticated, localStorage 키 auth.accessToken",
+        "api authFetch: 성공 unwrapped 반환, Content-Type·Authorization 자동부착, 400 string[] 유지 / 401·409 string→[msg] 정규화 / 네트워크실패 status0 / 비계약 5xx 일반메시지"
+      ]
+    },
+    {
+      "name": "frontend-component (가드/라우팅/렌더)",
+      "type": "frontend-component",
+      "runner": "jest + @testing-library/react + jsdom (next/navigation·@/lib/api mock)",
+      "command": "cd apps/web && npx jest --config jest.config.js",
+      "config": "apps/web/jest.config.js",
+      "files": [
+        "apps/web/test/dashboard.spec.tsx",
+        "apps/web/test/login.spec.tsx",
+        "apps/web/test/setup.ts"
+      ],
+      "passed": 5,
+      "failed": 0,
+      "covers": [
+        "dashboard: 토큰없음→/login 리다이렉트(+/me 미호출), 유효토큰→/me 성공→프로필 이메일 표시, 401→토큰폐기+/login",
+        "login: 성공→setToken+/dashboard 이동, 401→존재여부 비노출 전역에러+미이동"
+      ],
+      "harnessNote": "useRouter mock을 실제 Next처럼 '안정된 참조'로 반환하도록 구성(초기 프레시-객체 반환 시 useCallback([router]) 재생성으로 무한 렌더 → 이는 mock 충실도 문제였고 제품 버그 아님. 실제 Next.js는 안정 참조 반환)."
+    }
+  ],
+  "acceptanceCriteriaMapping": [
+    {
+      "id": 1,
+      "criteria": "유효한 이메일/비밀번호로 회원가입하면 201과 사용자 정보(비밀번호 제외)를 반환한다.",
+      "status": "passed",
+      "verifiedBy": ["e2e:POST /auth/signup 201", "unit:AuthService.signup", "unit:passwordHash 미노출"]
+    },
+    {
+      "id": 2,
+      "criteria": "중복 이메일로 회원가입하면 409를 반환한다.",
+      "status": "passed",
+      "verifiedBy": ["e2e:중복 409(error:Conflict)", "unit:P2002→ConflictException", "frontend:api 409→[msg] 정규화, signup page 전역표시 로직"]
+    },
+    {
+      "id": 3,
+      "criteria": "형식이 틀린 이메일/약한 비밀번호는 400과 필드별 에러를 반환한다.",
+      "status": "passed",
+      "verifiedBy": ["e2e:400 message:string[]", "unit:SignupDto isEmail/minLength/matches", "frontend:validation 규칙 + api 400 배열 유지"],
+      "note": "계약 확정대로 '필드별 맵'이 아니라 string[](Nest ValidationPipe 기본). 배열 유지·소비 실행 검증."
+    },
+    {
+      "id": 4,
+      "criteria": "올바른 자격증명으로 로그인하면 200과 accessToken을 반환한다.",
+      "status": "passed",
+      "verifiedBy": ["e2e:POST /auth/login 200 accessToken/Bearer/3600", "unit:토큰 HS256+payload+만료 1h"]
+    },
+    {
+      "id": 5,
+      "criteria": "틀린 비밀번호/없는 이메일으로 로그인하면 401을 반환한다(존재 여부 노출 금지).",
+      "status": "passed",
+      "verifiedBy": ["e2e:없는이메일·틀린비번 401 동일 message", "unit:두 케이스 메시지·상태 구별불가", "frontend:login 401 전역 고정메시지"]
+    },
+    {
+      "id": 6,
+      "criteria": "토큰 없이 /auth/me 호출 시 401을 반환한다.",
+      "status": "passed",
+      "verifiedBy": ["e2e:토큰없음 401", "e2e:잘못된토큰 401", "unit:JwtStrategy subject 없음 401"]
+    },
+    {
+      "id": 7,
+      "criteria": "유효 토큰으로 /auth/me 호출 시 200과 프로필을 반환한다.",
+      "status": "passed",
+      "verifiedBy": ["e2e:유효토큰 200 프로필(비번제외)", "unit:JwtStrategy.validate→User", "component:dashboard 프로필 렌더"]
+    },
+    {
+      "id": 8,
+      "criteria": "passwordHash는 어떤 응답에도 포함되지 않는다.",
+      "status": "passed",
+      "verifiedBy": ["e2e:signup/login/me 응답 JSON에 passwordHash 문자열 부재", "unit:toUserResponse 4필드·select 제외"]
+    },
+    {
+      "id": 9,
+      "criteria": "프론트: 미인증 상태로 /dashboard 접근 시 /login으로 리다이렉트한다.",
+      "status": "passed",
+      "verifiedBy": ["component:dashboard 토큰없음→router.replace('/login'), /me 미호출"]
+    },
+    {
+      "id": 10,
+      "criteria": "프론트: 로그인 성공 시 /dashboard로 이동하고 프로필이 표시된다.",
+      "status": "passed",
+      "verifiedBy": ["component:login 성공→setToken+replace('/dashboard')", "component:dashboard 유효토큰→프로필 이메일 표시"]
+    }
+  ],
+  "acceptanceCoverage": "10/10 충족 (전 항목 실행 검증)",
+  "stateTransition": {
+    "note": "01_db_migration_plan.md 상 auth 도메인은 stateMachine 미정의(User 단일 생명주기). 무단/죽은 전이 규칙 없음 → 검증 초점은 UNIQUE(중복→409)와 인증가드(401)로 이동, 해당 항목 모두 통과.",
+    "status": "n/a (상태머신 없음)"
+  },
+  "unverified": [
+    {
+      "item": "실제 PostgreSQL에 대한 Prisma 마이그레이션 실행 및 실 DB 통합",
+      "reason": "실행 환경에 시스템 PostgreSQL/Docker 미기동. e2e는 인메모리 Prisma fake로 HTTP 전 계층을 구동했으나, 실제 UNIQUE 인덱스가 P2002를 던지는지(스키마의 email @unique 실동작)와 Prisma 쿼리의 실 DB 정합은 미실행.",
+      "howToRunLocally": [
+        "cd apps/api && npm run db:up   # docker compose로 PostgreSQL 기동",
+        "cd apps/api && npx prisma migrate deploy   # 또는 prisma migrate dev --name init_auth",
+        "그 뒤 실 DB 대상 e2e를 원하면 InMemoryPrisma override 없이 AppModule 그대로 부팅해 supertest 재실행"
+      ]
+    },
+    {
+      "item": "실 브라우저 네비게이션 E2E(Playwright 등 링크 클릭→URL 도달)",
+      "reason": "브라우저 드라이버 미구성. 라우팅/가드는 컴포넌트 레벨에서 router.replace/push 호출로 실행 검증(도달 대상 경로 확인). 실 브라우저 왕복은 미실행.",
+      "howToRunLocally": [
+        "터미널1: cd apps/api && npm run start   (PostgreSQL 기동 후, :3001)",
+        "터미널2: cd apps/web && npm run dev      (:3000)",
+        "브라우저에서 /dashboard 미인증 진입→/login, 로그인→/dashboard 프로필 확인"
+      ]
+    }
+  ],
+  "runCommands": {
+    "prereq": "export PATH=\"/private/tmp/claude-501/-Users-user-codebase-meta-harness/0ef20a7c-aee4-4309-8ae9-8919abcb7780/scratchpad/node-v20.15.1-darwin-arm64/bin:$PATH\"",
+    "backendUnit": "cd apps/api && npm test",
+    "backendE2e": "cd apps/api && npm run test:e2e",
+    "frontend": "cd apps/web && npx jest --config jest.config.js"
+  },
+  "openIssuesForPM": [],
+  "notesForPM": [
+    "acceptanceCriteria 10건 전부 실행으로 검증 통과. 재구현/수정 요청 없음 — 기능 완료 게이트 통과.",
+    "환경 제약으로 '실 PostgreSQL 마이그레이션 실행'과 '실 브라우저 네비게이션'만 unverified. 나머지는 인메모리 HTTP e2e + 컴포넌트 렌더로 실행 대체 검증. 로컬 DB 기동 시 위 runCommands로 실 DB e2e 재현 가능.",
+    "테스트 하네스 구성 파일 추가됨: apps/api/{jest.config.js,jest-e2e.config.js} + package.json test 스크립트, apps/web/{jest.config.js,tsconfig.jest.json,test/setup.ts} + tsconfig exclude 'test'(next build 무영향). devDependencies 추가(jest/ts-jest/supertest/testing-library 등)."
+  ]
+}

@@ -1,0 +1,26 @@
+// auth 기능 — Prisma 스키마 (PostgreSQL)
+// 위치: apps/api (Nest.js) 내 prisma/schema.prisma 로 배치될 예정.
+// 설계 전용 — 실제 마이그레이션 실행은 Phase 3 backend-impl 담당.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// 회원 계정.
+/// Prisma 필드는 camelCase(= api-designer 응답 shape와 정합),
+/// DB 컬럼은 @map 으로 snake_case 매핑.
+/// passwordHash 는 어떤 API 응답에도 노출 금지(service/DTO 계층에서 제외).
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}

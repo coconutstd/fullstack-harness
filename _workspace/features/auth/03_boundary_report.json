@@ -1,0 +1,120 @@
+{
+  "feature": "auth",
+  "phase": "3-4",
+  "role": "boundary-verifier",
+  "oracle": "01_api_contract.json",
+  "reconciliation": "01_design_reconciliation.md",
+  "checkedAt": "2026-07-05 (backend+frontend 모듈 완료 후 전체 경계면 1차 교차검증)",
+  "method": "계약 JSON을 정답지로 백엔드 실제 소스(controller/service/dto/jwt.strategy/main)와 프론트 실제 소스(lib/api,types,auth,validation + signup/login/dashboard page)를 동시에 열어 3자 대조. 자기보고(02_backend_progress) 미신뢰, 코드 직접 확인.",
+  "verificationEnvironmentNote": "Node/DB 미기동 환경이라 실런타임 호출(타입체크/엔드포인트 실호출)은 미수행. 정적 3자 shape 대조는 코드 레벨로 완전 수행. 실행 검증은 Phase 5 test-suite 몫.",
+  "summary": {
+    "total": 12,
+    "pass": 12,
+    "fail": 0,
+    "unverified": 0,
+    "verdict": "경계면 계약 위반 없음. shape/래핑/필드명/에러포맷/엔드포인트매핑/CORS·포트 전 항목 계약=백엔드=프론트 3자 일치."
+  },
+  "items": [
+    {
+      "endpoint": "POST /auth/signup",
+      "check": "response-shape (201 User)",
+      "status": "pass",
+      "detail": "계약 User{id,email,createdAt,updatedAt}. 백엔드 service.signup → select 4필드 후 toUserResponse(날짜 ISO string), controller @HttpCode(201) 순수객체 반환. 프론트 authFetch<User>('/auth/signup')로 소비(응답 미표시, /login 이동). 3자 일치.",
+      "producer": "apps/api/src/auth/auth.service.ts:34-53, auth.controller.ts:21-25",
+      "consumer": "apps/web/app/signup/page.tsx:54",
+      "severity": null
+    },
+    {
+      "endpoint": "POST /auth/signup",
+      "check": "wrapping (unwrapped)",
+      "status": "pass",
+      "detail": "계약 wrapped:false. 백엔드 {data} 미사용 순수객체. 프론트 authFetch가 body를 그대로 T 반환(.data 언랩 없음). 일치.",
+      "severity": null
+    },
+    {
+      "endpoint": "POST /auth/login",
+      "check": "response-shape (200 AuthTokenResponse)",
+      "status": "pass",
+      "detail": "계약 {accessToken,tokenType:'Bearer',expiresIn:3600,user:User}. 백엔드 service.login이 정확히 이 4필드 반환(EXPIRES_IN_SECONDS=3600, tokenType 리터럴 'Bearer'). 프론트 authFetch<AuthTokenResponse> 후 res.accessToken(최상위) 소비→setToken. 3자 일치.",
+      "producer": "apps/api/src/auth/auth.service.ts:60-92",
+      "consumer": "apps/web/app/login/page.tsx:57-61",
+      "severity": null
+    },
+    {
+      "endpoint": "POST /auth/login",
+      "check": "token-field-location (accessToken 최상위)",
+      "status": "pass",
+      "detail": "계약 tokenField=accessToken(최상위). 백엔드 최상위 accessToken. 프론트 res.accessToken 직접 접근(중첩 아님). 일치.",
+      "severity": null
+    },
+    {
+      "endpoint": "GET /auth/me",
+      "check": "response-shape (200 User) + auth-guard 매핑",
+      "status": "pass",
+      "detail": "계약 auth:true(Bearer), shape User. 백엔드 @UseGuards(JwtAuthGuard) 보호, JwtStrategy.validate가 DB조회 후 toUserResponse→request.user, CurrentUser 주입 반환. 프론트 authFetch<User>('/auth/me',GET), authFetch가 getToken() 있으면 Authorization: Bearer 자동부착(api.ts:69-72). 보호경로↔Bearer부착 위치 일치.",
+      "producer": "apps/api/src/auth/auth.controller.ts:35-39, jwt.strategy.ts:27-38",
+      "consumer": "apps/web/app/dashboard/page.tsx:33, apps/web/lib/api.ts:69-72",
+      "severity": null
+    },
+    {
+      "endpoint": "ALL",
+      "check": "field-naming (camelCase)",
+      "status": "pass",
+      "detail": "accessToken/tokenType/expiresIn/createdAt/updatedAt/email 전부 camelCase. 백엔드 toUserResponse가 Prisma Date→ISO string 변환하며 카멜 필드 유지. 프론트 types.ts User/AuthTokenResponse 동일 필드명. snake_case 누출 없음(DB @map snake는 응답 경계 이전에서 차단).",
+      "severity": null
+    },
+    {
+      "endpoint": "ALL",
+      "check": "passwordHash-leak-guard",
+      "status": "pass",
+      "detail": "signup select에 passwordHash 미포함(service.ts:41). login은 compare 위해 select에 포함하나(ts:68) 반환은 toUserResponse로 4필드만 매핑—누출 안 됨. jwt.strategy select 4필드만. toUserResponse는 passwordHash를 매핑 자체를 안 함(user.types.ts:30-42). 어떤 응답 경로에도 passwordHash 미누출.",
+      "producer": "apps/api/src/auth/auth.service.ts:41,68-90, user.types.ts:30-42, jwt.strategy.ts:30",
+      "severity": null
+    },
+    {
+      "endpoint": "POST /auth/signup, POST /auth/login",
+      "check": "error-format 400 (message:string[])",
+      "status": "pass",
+      "detail": "계약 400 = {statusCode,message:string[],error:'Bad Request'}(Nest ValidationPipe 기본). 백엔드 main.ts 전역 ValidationPipe(whitelist,transform), 커스텀 필터 없음→기본 포맷. 프론트 toMessages()가 Array.isArray면 배열 그대로, api.ts:39-43. isErrorShape가 statusCode+message 확인. signup/login page가 err.messages.join(' · ')로 400 배열 처리. 일치.",
+      "producer": "apps/api/src/main.ts:10-15",
+      "consumer": "apps/web/lib/api.ts:39-52,96-110",
+      "severity": null
+    },
+    {
+      "endpoint": "POST /auth/login, GET /auth/me",
+      "check": "error-format 401 (message:string)",
+      "status": "pass",
+      "detail": "계약 401 message:string. 백엔드 login UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다')(service.ts:78), me 가드 401 {message:'Unauthorized'}. 프론트 toMessages가 단일 string→[msg] 정규화. login page는 401을 고정 메시지로 전역표시(존재여부 비노출 준수), dashboard는 401→clearToken+/login. 일치.",
+      "severity": null
+    },
+    {
+      "endpoint": "POST /auth/signup",
+      "check": "error-format 409 (message:string)",
+      "status": "pass",
+      "detail": "계약 409 {message:string,error:'Conflict'}. 백엔드 ConflictException('이미 사용 중인 이메일입니다')(P2002 매핑, service.ts:49). 프론트 signup page err.status===409→err.messages[0] 전역표시. 일치.",
+      "severity": null
+    },
+    {
+      "endpoint": "ALL",
+      "check": "endpoint-mapping (경로/메서드 1:1)",
+      "status": "pass",
+      "detail": "백엔드 라우트 3개(POST /auth/signup, POST /auth/login, GET /auth/me) = 프론트 호출 3개 정확히 1:1. 백엔드 있으나 프론트 미호출 없음, 프론트 호출하나 백엔드 없음(404 위험) 없음. 폐기된 error.fieldErrors 잔재 프론트 전체 grep 결과 NONE.",
+      "severity": null
+    },
+    {
+      "endpoint": "INFRA",
+      "check": "CORS/port alignment",
+      "status": "pass",
+      "detail": "백엔드 main.ts CORS origin=WEB_ORIGIN(.env=http://localhost:3000)=프론트 dev origin. 백엔드 PORT=3001. 프론트 web/.env.local NEXT_PUBLIC_API_URL=http://localhost:3001=백엔드 포트. credentials:true지만 인증은 Bearer 헤더 기반(쿠키 미사용)이라 프론트 credentials:'include' 불필요—무해. 일치.",
+      "producer": "apps/api/src/main.ts:18-22, apps/api/.env",
+      "consumer": "apps/web/.env.local, apps/web/lib/api.ts:9-10",
+      "severity": null
+    }
+  ],
+  "openIssuesForPM": [],
+  "notesForTeamB": [
+    "backend-impl: 경계면 shape 이슈 없음. 수정 요청 사항 없음.",
+    "frontend-impl: 경계면 shape 이슈 없음. .data 언랩·fieldErrors 잔재 없음(확인 완료). 수정 요청 사항 없음.",
+    "test-suite(Phase5)로 이관: 정적 3자 대조는 통과. Node/DB 기동 후 실런타임(회원가입→로그인→me 라운드트립, 실제 401/409/400 응답 body) 실행 검증 필요."
+  ]
+}

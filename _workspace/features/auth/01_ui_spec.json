@@ -1,0 +1,230 @@
+{
+  "feature": "auth",
+  "title": "인증 화면 명세 (회원가입 · 로그인 · 대시보드)",
+  "app": "apps/web",
+  "framework": "Next.js App Router + TypeScript",
+  "apiBaseUrl": "http://localhost:3001",
+  "auth": {
+    "tokenType": "JWT access token (HS256, 만료 1h)",
+    "storage": "localStorage",
+    "storageKey": "auth.accessToken",
+    "storageDecision": "localStorage를 선택. 근거: (1) 요구사항이 리프레시 토큰/서버측 세션 저장소를 스코프에서 제외했고 단일 access token만 클라이언트가 보관·폐기한다. (2) 백엔드가 Authorization: Bearer 헤더로 토큰을 받는 Bearer 모델이므로 JS에서 읽어 헤더에 부착해야 한다 — httpOnly cookie는 JS에서 읽을 수 없어 이 모델과 맞지 않는다. (3) 인증 가드가 서버 미들웨어(SSR)가 아니라 클라이언트 가드로 명세되어(요구사항 acceptanceCriteria), 클라이언트에서 동기적으로 토큰 존재를 확인해야 한다. (4) 로그아웃은 localStorage.removeItem으로 즉시 토큰 폐기가 가능하다. 트레이드오프: XSS에 취약하므로 프론트는 사용자 입력 렌더링 시 이스케이프를 유지하고 토큰을 로그에 남기지 않는다.",
+    "attachHeader": "Authorization: Bearer <accessToken>",
+    "logout": "localStorage.removeItem('auth.accessToken') 후 /login으로 이동 (서버 호출 없음 — 클라이언트 토큰 폐기만)"
+  },
+  "routes": [
+    {
+      "urlPath": "/signup",
+      "filePath": "app/signup/page.tsx",
+      "auth": false,
+      "rendering": "client",
+      "purpose": "이메일/비밀번호로 신규 계정을 생성하는 회원가입 폼. 이미 로그인된 사용자가 진입하면 /dashboard로 이동.",
+      "components": ["SignupForm", "AuthCard", "FieldError", "FormError"],
+      "form": {
+        "name": "SignupForm",
+        "fields": [
+          {
+            "name": "email",
+            "type": "email",
+            "label": "이메일",
+            "autoComplete": "email",
+            "required": true,
+            "clientValidation": [
+              { "rule": "required", "message": "이메일을 입력하세요." },
+              { "rule": "emailFormat", "regex": "RFC 이메일 형식", "message": "올바른 이메일 형식이 아닙니다." }
+            ],
+            "normalize": "제출 전 trim + toLowerCase (백엔드도 소문자 정규화하므로 표시 일치 목적)"
+          },
+          {
+            "name": "password",
+            "type": "password",
+            "label": "비밀번호",
+            "autoComplete": "new-password",
+            "required": true,
+            "clientValidation": [
+              { "rule": "required", "message": "비밀번호를 입력하세요." },
+              { "rule": "minLength", "value": 8, "message": "비밀번호는 최소 8자입니다." },
+              { "rule": "pattern", "regex": "(?=.*[A-Za-z])(?=.*\\d)", "message": "문자와 숫자를 각각 1자 이상 포함해야 합니다." }
+            ]
+          }
+        ],
+        "submit": {
+          "label": "회원가입",
+          "endpoint": "POST /auth/signup",
+          "requestBody": { "email": "string", "password": "string" }
+        }
+      },
+      "dataSources": [
+        {
+          "endpoint": "POST /auth/signup",
+          "trigger": "submit",
+          "consumesResponseFields": ["user.id", "user.email", "user.createdAt"],
+          "note": "가입 성공 응답(201)의 user는 화면에서 직접 표시하지 않고 성공 후 /login으로 이동. accessToken은 signup 응답에서 소비하지 않음(로그인으로 발급받음)."
+        }
+      ],
+      "states": {
+        "idle": "빈 폼 표시.",
+        "submitting": "제출 버튼 disabled + 스피너/‘처리 중…’ 라벨. 입력 필드 readonly.",
+        "fieldError": "필드별 에러를 해당 인풋 아래 FieldError로 표시. 소스: 클라이언트 검증 실패 또는 400 응답의 fieldErrors.{email|password}.",
+        "globalError": "409(이메일 중복) → ‘이미 사용 중인 이메일입니다.’ 를 FormError(폼 상단)에 표시. 5xx/네트워크 → ‘잠시 후 다시 시도해주세요.’",
+        "success": "201 수신 → 토스트/메시지 ‘가입 완료. 로그인해주세요.’ 후 /login으로 이동."
+      },
+      "errorMapping": [
+        { "httpStatus": 400, "handling": "응답 error.fieldErrors를 필드에 매핑(email, password)." },
+        { "httpStatus": 409, "handling": "globalError: ‘이미 사용 중인 이메일입니다.’ (계정 존재 노출은 가입 화면에서는 허용)" },
+        { "httpStatus": "5xx | network", "handling": "globalError: 일반 재시도 메시지." }
+      ],
+      "navigatesTo": [
+        { "on": "success", "to": "/login" },
+        { "on": "alreadyAuthenticated", "to": "/dashboard" }
+      ],
+      "links": [{ "label": "이미 계정이 있으신가요? 로그인", "href": "/login" }]
+    },
+    {
+      "urlPath": "/login",
+      "filePath": "app/login/page.tsx",
+      "auth": false,
+      "rendering": "client",
+      "purpose": "이메일/비밀번호로 로그인하여 accessToken을 발급받고 저장. 이미 로그인된 사용자가 진입하면 /dashboard로 이동.",
+      "components": ["LoginForm", "AuthCard", "FieldError", "FormError"],
+      "form": {
+        "name": "LoginForm",
+        "fields": [
+          {
+            "name": "email",
+            "type": "email",
+            "label": "이메일",
+            "autoComplete": "email",
+            "required": true,
+            "clientValidation": [
+              { "rule": "required", "message": "이메일을 입력하세요." },
+              { "rule": "emailFormat", "message": "올바른 이메일 형식이 아닙니다." }
+            ],
+            "normalize": "제출 전 trim + toLowerCase"
+          },
+          {
+            "name": "password",
+            "type": "password",
+            "label": "비밀번호",
+            "autoComplete": "current-password",
+            "required": true,
+            "clientValidation": [{ "rule": "required", "message": "비밀번호를 입력하세요." }]
+          }
+        ],
+        "submit": {
+          "label": "로그인",
+          "endpoint": "POST /auth/login",
+          "requestBody": { "email": "string", "password": "string" }
+        }
+      },
+      "dataSources": [
+        {
+          "endpoint": "POST /auth/login",
+          "trigger": "submit",
+          "consumesResponseFields": ["accessToken", "user.id", "user.email"],
+          "onSuccess": "accessToken을 localStorage['auth.accessToken']에 저장 후 /dashboard로 이동. (user는 대시보드에서 /auth/me로 다시 조회하므로 저장 불필요.)"
+        }
+      ],
+      "states": {
+        "idle": "빈 폼 표시.",
+        "submitting": "제출 버튼 disabled + ‘로그인 중…’. 입력 readonly.",
+        "fieldError": "클라이언트 검증 실패만 필드에 표시. 401은 계정 존재 여부 비노출을 위해 필드가 아닌 전역 에러로만 처리.",
+        "globalError": "401 → ‘이메일 또는 비밀번호가 올바르지 않습니다.’ (존재 여부 비노출 — 요구사항 준수). 5xx/네트워크 → 일반 재시도 메시지.",
+        "success": "200 + accessToken 저장 → /dashboard로 이동."
+      },
+      "errorMapping": [
+        { "httpStatus": 400, "handling": "클라이언트 검증으로 대부분 선차단. 백엔드 400 발생 시 error.fieldErrors 매핑." },
+        { "httpStatus": 401, "handling": "globalError: ‘이메일 또는 비밀번호가 올바르지 않습니다.’ — 이메일/비밀번호 어느 쪽이 틀렸는지 구분 표시 금지." },
+        { "httpStatus": "5xx | network", "handling": "globalError: 일반 재시도 메시지." }
+      ],
+      "navigatesTo": [
+        { "on": "success", "to": "/dashboard" },
+        { "on": "alreadyAuthenticated", "to": "/dashboard" }
+      ],
+      "links": [{ "label": "계정이 없으신가요? 회원가입", "href": "/signup" }]
+    },
+    {
+      "urlPath": "/dashboard",
+      "filePath": "app/dashboard/page.tsx",
+      "auth": true,
+      "rendering": "client",
+      "purpose": "로그인 후 진입 화면. GET /auth/me로 현재 회원 프로필(이메일)을 조회해 표시하고 로그아웃 버튼을 제공. 미인증 시 /login으로 클라이언트 가드가 리다이렉트.",
+      "guard": {
+        "type": "client",
+        "where": "app/dashboard/page.tsx (또는 감싸는 클라이언트 컴포넌트 AuthGuard) 내 useEffect",
+        "logic": "마운트 시 localStorage['auth.accessToken']을 읽는다 → 없으면 즉시 router.replace('/login'). 있으면 GET /auth/me 호출. 응답 401(만료/무효 토큰)이면 토큰 제거 후 router.replace('/login'). 렌더 전 가드 판정 동안 loading 뷰 표시(토큰/프로필 확정 전 대시보드 콘텐츠 미노출).",
+        "reason": "SSR 미들웨어가 아닌 클라이언트 가드 — localStorage 토큰은 서버에서 읽을 수 없고 요구사항이 클라이언트 가드를 명시."
+      },
+      "components": ["AuthGuard", "ProfileCard", "LogoutButton", "LoadingView", "ErrorView"],
+      "dataSources": [
+        {
+          "endpoint": "GET /auth/me",
+          "trigger": "mount (가드 통과 후)",
+          "requestHeaders": { "Authorization": "Bearer <accessToken>" },
+          "consumesResponseFields": ["user.id", "user.email", "user.createdAt", "user.updatedAt"],
+          "display": "ProfileCard에 user.email(주 표시), 보조로 user.createdAt(가입일) 표시."
+        }
+      ],
+      "states": {
+        "loading": "가드 판정 + /auth/me 요청 중 LoadingView(스켈레톤/스피너). 대시보드 콘텐츠 미노출.",
+        "empty": "본 화면에 빈 상태 없음(프로필은 인증 성공 시 항상 존재). 방어적으로 user가 없으면 error 처리.",
+        "error": "401 → 토큰 폐기 후 /login 리다이렉트(에러 화면 없이). 5xx/네트워크 → ErrorView + ‘다시 시도’ 버튼(재요청).",
+        "success": "ProfileCard에 이메일/가입일 표시 + LogoutButton 표시."
+      },
+      "actions": [
+        {
+          "name": "logout",
+          "trigger": "LogoutButton click",
+          "effect": "localStorage.removeItem('auth.accessToken') 후 router.replace('/login'). 서버 호출 없음(클라이언트 세션 종료).",
+          "endpoint": null
+        }
+      ],
+      "navigatesTo": [
+        { "on": "unauthenticated | tokenExpired(401)", "to": "/login" },
+        { "on": "logout", "to": "/login" }
+      ]
+    }
+  ],
+  "sharedComponents": [
+    { "name": "AuthCard", "type": "server", "props": ["title", "children", "footer"], "purpose": "인증 화면 공통 카드 레이아웃(제목 + 폼 슬롯 + 하단 링크)." },
+    { "name": "SignupForm", "type": "client", "props": ["onSuccess"], "validation": "email RFC 형식 + toLowerCase, password 최소 8자 & 문자1+숫자1", "state": "email, password, fieldErrors, globalError, status(idle|submitting|error)" },
+    { "name": "LoginForm", "type": "client", "props": ["onSuccess"], "validation": "email RFC 형식, password required", "state": "email, password, fieldErrors, globalError, status(idle|submitting|error)" },
+    { "name": "FieldError", "type": "client", "props": ["message"], "purpose": "인풋 하단 필드별 에러 메시지(빈 값이면 렌더 안 함)." },
+    { "name": "FormError", "type": "client", "props": ["message"], "purpose": "폼 상단 전역 에러 배너." },
+    { "name": "AuthGuard", "type": "client", "props": ["children"], "purpose": "localStorage 토큰 확인 후 미인증 시 /login 리다이렉트, 판정 중 LoadingView. 보호 라우트를 감싼다." },
+    { "name": "ProfileCard", "type": "client", "props": ["email", "createdAt"], "purpose": "회원 프로필 표시(이메일 주 표시)." },
+    { "name": "LogoutButton", "type": "client", "props": ["onLogout"], "purpose": "클릭 시 토큰 폐기 + /login 이동." },
+    { "name": "LoadingView", "type": "client", "props": [], "purpose": "스피너/스켈레톤." },
+    { "name": "ErrorView", "type": "client", "props": ["message", "onRetry"], "purpose": "네트워크/서버 에러 + 재시도." }
+  ],
+  "apiClient": {
+    "location": "apps/web/lib/api.ts",
+    "baseUrl": "http://localhost:3001",
+    "helpers": [
+      "getToken(): string | null — localStorage['auth.accessToken']",
+      "setToken(token: string): void",
+      "clearToken(): void",
+      "authFetch(path, init): 자동으로 Authorization: Bearer 헤더 부착 + JSON 파싱"
+    ],
+    "note": "환경변수 NEXT_PUBLIC_API_BASE_URL로 baseUrl 주입 권장(기본값 http://localhost:3001)."
+  },
+  "expectedApiShapes": {
+    "note": "01_api_contract.json 부재 상태에서 화면이 소비하는 필드를 선(先)명시. api-designer는 아래 필드명을 계약에서 동일하게 확정해야 함(SendMessage로 정합 요청).",
+    "POST /auth/signup (201)": { "user": { "id": "string", "email": "string", "createdAt": "string(ISO)" } },
+    "POST /auth/login (200)": { "accessToken": "string", "user": { "id": "string", "email": "string" } },
+    "GET /auth/me (200)": { "user": { "id": "string", "email": "string", "createdAt": "string(ISO)", "updatedAt": "string(ISO)" } },
+    "error (400/401/409/5xx)": { "error": { "code": "string", "message": "string", "fieldErrors": { "email": "string?", "password": "string?" } } },
+    "criticalFieldNames": ["accessToken (login 응답 최상위)", "user.email", "user.createdAt"]
+  },
+  "routingNotes": "route group 미사용 — filePath에서 URL로 그대로 매핑(app/login/page.tsx → /login). 동적 세그먼트 없음. 세 화면 모두 'use client'(폼 상태·localStorage·router 사용). AuthCard/레이아웃 정적 부분은 server component 가능하나 폼은 client. /dashboard의 인증 가드는 클라이언트(useEffect+router.replace)이며 SSR 미들웨어를 쓰지 않는다(localStorage 토큰은 서버에서 접근 불가). navigatesTo의 모든 목적지(/login, /signup, /dashboard)는 본 feature 내부 라우트로 dependencies 불필요.",
+  "assumptions": [
+    "signup 성공 후 자동 로그인하지 않고 /login으로 유도한다(요구사항이 자동 로그인을 명시하지 않음). api-designer가 signup 응답에 accessToken을 포함하기로 하면 자동 로그인으로 변경 가능 — 정합 확인 필요.",
+    "성공/에러 응답 래핑 형태(래핑 여부, error.fieldErrors 키)는 api-designer 계약을 따른다. 위 expectedApiShapes는 제안이며 계약 확정 시 본 spec의 consumesResponseFields를 그에 맞춘다.",
+    "accessToken은 login 응답 최상위 필드명 'accessToken'으로 가정(요구사항·acceptanceCriteria 문구와 일치)."
+  ],
+  "openQuestionsForApiDesigner": [
+    "성공 응답을 래핑({data:...})하는가, 평면인가? → authFetch 파싱 로직에 영향.",
+    "signup(201) 응답에 accessToken을 포함하는가(자동 로그인 여부 결정)?",
+    "필드별 검증 에러의 정확한 키 경로(error.fieldErrors.email vs errors[].field) 확정 요청."
+  ]
+}

@@ -1,0 +1,151 @@
+{
+  "feature": "auth",
+  "phase": 3,
+  "role": "backend-impl",
+  "producedBy": "backend-impl",
+  "contractSource": "01_api_contract.json",
+  "designReconciliation": "01_design_reconciliation.md",
+  "generatedAt": "2026-07-05",
+  "projectRoot": "apps/api",
+  "environmentNote": "이 실행 환경에 Node.js/npm/npx, Docker, PostgreSQL 이 모두 미설치. 따라서 npm install / prisma generate / prisma migrate / tsc(빌드) 를 실제로 실행하지 못함. 소스는 완전히 작성했고, 툴 설치 후 아래 runCommands 로 그대로 구동 가능. 파괴적 작업 없음(초기 init).",
+  "files": [
+    { "path": "apps/api/package.json", "desc": "의존성/스크립트(build, prisma:migrate, prisma:generate, db:up 등)" },
+    { "path": "apps/api/tsconfig.json", "desc": "TS strict, decorators, ES2021" },
+    { "path": "apps/api/tsconfig.build.json", "desc": "nest build 용" },
+    { "path": "apps/api/nest-cli.json", "desc": "Nest CLI 설정" },
+    { "path": "apps/api/.env", "desc": "DATABASE_URL, PORT=3001, WEB_ORIGIN=http://localhost:3000, JWT_SECRET" },
+    { "path": "apps/api/.env.example", "desc": "env 템플릿" },
+    { "path": "apps/api/docker-compose.yml", "desc": "postgres:16-alpine, db app_dev, 5432, healthcheck" },
+    { "path": "apps/api/prisma/schema.prisma", "desc": "db-migrator 01_db_schema.prisma 반영(User, @map snake_case, @@map users)" },
+    { "path": "apps/api/prisma/migrations/migration_lock.toml", "desc": "provider=postgresql" },
+    { "path": "apps/api/prisma/migrations/20260705000000_init_auth/migration.sql", "desc": "users 테이블 + email UNIQUE 인덱스 사전 생성(migrate deploy 로 적용 가능)" },
+    { "path": "apps/api/src/main.ts", "desc": "포트 3001, 전역 ValidationPipe(whitelist,transform), CORS(WEB_ORIGIN=http://localhost:3000)" },
+    { "path": "apps/api/src/app.module.ts", "desc": "ConfigModule(global) + PrismaModule + AuthModule" },
+    { "path": "apps/api/src/prisma/prisma.service.ts", "desc": "PrismaClient extends, onModuleInit/Destroy connect/disconnect" },
+    { "path": "apps/api/src/prisma/prisma.module.ts", "desc": "@Global PrismaModule" },
+    { "path": "apps/api/src/auth/auth.module.ts", "desc": "PassportModule + JwtModule(HS256, expiresIn 1h, secret=JWT_SECRET fallback)" },
+    { "path": "apps/api/src/auth/auth.controller.ts", "desc": "POST /auth/signup(201), POST /auth/login(200), GET /auth/me(Guard)" },
+    { "path": "apps/api/src/auth/auth.service.ts", "desc": "bcrypt(cost 10), P2002→409, 자격증명 불일치 401(존재여부 비노출), JWT 발급, 계약 shape 명시 변환" },
+    { "path": "apps/api/src/auth/dto/signup.dto.ts", "desc": "email @IsEmail+소문자 Transform, password @MinLength(8)+@Matches(문자+숫자)" },
+    { "path": "apps/api/src/auth/dto/login.dto.ts", "desc": "email @IsEmail+소문자, password @IsNotEmpty" },
+    { "path": "apps/api/src/auth/jwt.strategy.ts", "desc": "Bearer 추출, HS256, payload.sub 로 DB 조회, 계약 User shape 반환" },
+    { "path": "apps/api/src/auth/jwt-auth.guard.ts", "desc": "AuthGuard('jwt')" },
+    { "path": "apps/api/src/auth/current-user.decorator.ts", "desc": "request.user(=계약 User) 주입" },
+    { "path": "apps/api/src/auth/user.types.ts", "desc": "UserResponse/AuthTokenResponse/JwtPayload + toUserResponse(passwordHash 제외, 날짜 ISO)" }
+  ],
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/auth/signup",
+      "auth": false,
+      "successStatus": 201,
+      "wrapped": false,
+      "requestBody": { "email": "string(RFC email, 서버 소문자 정규화)", "password": "string(min8, 문자+숫자)" },
+      "actualResponseShape": {
+        "id": "string",
+        "email": "string",
+        "createdAt": "string(ISO8601)",
+        "updatedAt": "string(ISO8601)"
+      },
+      "passwordHashExcluded": true,
+      "errors": [
+        { "status": 400, "shape": "{ statusCode, message: string[], error: 'Bad Request' }", "when": "이메일 형식/비밀번호 정책 위반(Nest ValidationPipe 기본)" },
+        { "status": 409, "shape": "{ statusCode: 409, message: '이미 사용 중인 이메일입니다', error: 'Conflict' }", "when": "이메일 중복(Prisma P2002 매핑)" }
+      ],
+      "contractMatch": true,
+      "selfCheck": {
+        "fieldsCamelCase": true,
+        "wrappingMatchesContract": true,
+        "datesISOString": true,
+        "dtoValidationActive": true,
+        "noAnyBypass": true
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/auth/login",
+      "auth": false,
+      "successStatus": 200,
+      "wrapped": false,
+      "requestBody": { "email": "string", "password": "string" },
+      "actualResponseShape": {
+        "accessToken": "string(JWT, HS256)",
+        "tokenType": "Bearer",
+        "expiresIn": 3600,
+        "user": { "id": "string", "email": "string", "createdAt": "string(ISO8601)", "updatedAt": "string(ISO8601)" }
+      },
+      "passwordHashExcluded": true,
+      "jwt": { "alg": "HS256", "expiresIn": "1h(=3600s)", "payload": { "sub": "userId", "email": "email" }, "secretEnv": "JWT_SECRET(fallback 존재)" },
+      "errors": [
+        { "status": 400, "shape": "{ statusCode, message: string[], error: 'Bad Request' }", "when": "body 형식 오류(email 형식/필드 누락)" },
+        { "status": 401, "shape": "{ statusCode: 401, message: '이메일 또는 비밀번호가 올바르지 않습니다', error: 'Unauthorized' }", "when": "없는 이메일/틀린 비밀번호 동일 메시지(존재여부 비노출)" }
+      ],
+      "contractMatch": true,
+      "selfCheck": {
+        "fieldsCamelCase": true,
+        "wrappingMatchesContract": true,
+        "datesISOString": true,
+        "tokenAtTopLevel": true,
+        "existenceNotDisclosed": true,
+        "dtoValidationActive": true,
+        "noAnyBypass": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/auth/me",
+      "auth": true,
+      "guard": "JwtAuthGuard",
+      "successStatus": 200,
+      "wrapped": false,
+      "actualResponseShape": {
+        "id": "string",
+        "email": "string",
+        "createdAt": "string(ISO8601)",
+        "updatedAt": "string(ISO8601)"
+      },
+      "passwordHashExcluded": true,
+      "errors": [
+        { "status": 401, "shape": "{ statusCode: 401, message: 'Unauthorized', error: 'Unauthorized' }", "when": "토큰 없음/만료/서명오류" }
+      ],
+      "contractMatch": true,
+      "selfCheck": {
+        "fieldsCamelCase": true,
+        "wrappingMatchesContract": true,
+        "datesISOString": true,
+        "guardEnforced": true,
+        "noAnyBypass": true
+      }
+    }
+  ],
+  "conventions": {
+    "successWrapping": "unwrapped(순수 객체 직접 반환) — 계약/정합문 준수, { data } 미사용",
+    "errorShape": "{ statusCode, message, error } — Nest 기본 HttpException 필터 + ValidationPipe. 커스텀 필터 미도입(계약이 기본 포맷을 정답지로 명시).",
+    "cors": { "origin": "http://localhost:3000", "env": "WEB_ORIGIN", "credentials": true },
+    "port": 3001,
+    "emailNormalization": "trim + toLowerCase (DTO Transform + service 이중 적용)"
+  },
+  "migration": {
+    "status": "pending",
+    "reason": "로컬 PostgreSQL/Docker/Node 미기동(실행 환경에 미설치). 파괴적 작업 없음(신규 테이블 생성 init).",
+    "schemaReflected": true,
+    "sqlPreGenerated": "apps/api/prisma/migrations/20260705000000_init_auth/migration.sql (users + email UNIQUE 인덱스)",
+    "runCommands": [
+      "cd apps/api",
+      "npm install",
+      "docker compose up -d   # PostgreSQL 기동 (또는 로컬 5432 준비)",
+      "npx prisma generate",
+      "npx prisma migrate deploy   # 사전 생성 SQL 적용 (또는 최초 개발 시 npx prisma migrate dev --name init_auth)"
+    ]
+  },
+  "build": {
+    "status": "not_run",
+    "reason": "Node/npm/tsc 미설치로 npm install 및 npx tsc --noEmit / npm run build 실행 불가.",
+    "note": "@prisma/client 타입은 `prisma generate` 이후 생성되므로, generate 전에는 auth.service.ts 의 Prisma import 타입이 미해결(정상). 설치+generate 후 `npm run build` 로 타입 통과 예상. 표준 Nest 10 + Prisma 5 구성으로 코드 자체는 타입 정합.",
+    "verifyCommand": "cd apps/api && npm install && npx prisma generate && npm run build"
+  },
+  "openIssuesForBoundaryVerifier": [
+    "계약 대비 shape 불일치 없음(자가 점검 통과). 실런타임 검증은 Node/DB 기동 환경에서 수행 필요.",
+    "login DTO 는 email 을 @IsEmail 로 검증하므로 '형식이 잘못된 이메일'은 400, '형식은 맞지만 없는 이메일'은 401(존재여부 비노출)로 분기됨 — 계약 errorStatusTable(login 400 email 형식 / 401 자격증명)과 정합."
+  ]
+}
