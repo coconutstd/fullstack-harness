@@ -1,0 +1,24 @@
+// auth 기능 — Prisma 스키마 (PostgreSQL)
+// db-migrator 설계(_workspace/features/auth/01_db_schema.prisma) 반영본.
+// Prisma 필드는 camelCase(응답 shape 정합), DB 컬럼은 @map 으로 snake_case.
+// passwordHash 는 어떤 API 응답에도 노출 금지(service 계층에서 명시 제외).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// 회원 계정.
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
